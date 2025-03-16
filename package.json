@@ -1,0 +1,30 @@
+{
+  "name": "audio-visualizer-js",
+  "private": false,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/audio-visualizer.umd.js",
+  "module": "dist/audio-visualizer.es.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/audio-visualizer.es.js",
+      "require": "./dist/audio-visualizer.umd.js"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  },
+  "dependencies": {
+    "@types/node": "^22.13.10"
+  }
+}
