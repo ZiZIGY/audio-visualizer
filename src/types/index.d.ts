@@ -11,9 +11,21 @@ export interface AudioVisualizerOptions {
   fillColor: string | null; // Цвет заливки (null для градиента)
 
   // Тип визуализации
-  visualizationType: 'smooth' | 'bars'; // Плавный или столбчатый
+  visualizationType: 'smooth' | 'bars' | 'custom'; // Плавный, столбчатый или кастомный
   barWidth: number; // Ширина столбца (для столбчатого типа)
   barSpacing: number; // Расстояние между столбцами
+  customRenderer?: (
+    ctx: CanvasRenderingContext2D,
+    dataArray: Uint8Array,
+    params: {
+      canvas: HTMLCanvasElement;
+      startIndex: number;
+      usableBufferLength: number;
+      maxHeightPx: number;
+      options: AudioVisualizerOptions;
+      getColor: (index: number) => string | CanvasGradient;
+    }
+  ) => void; // Функция для кастомного рендеринга
 
   // Настройки градиента
   gradient: {
@@ -55,7 +67,45 @@ export class AudioVisualizer {
 
   options: AudioVisualizerOptions;
 
+  // Основные методы
   start(): void;
   stop(): void;
   updateOptions(newOptions: Partial<AudioVisualizerOptions>): void;
+
+  // Новые геттеры
+  get isPlaying(): boolean;
+  get audioData(): Uint8Array | null;
+  get frequencyBinCount(): number;
+  get canvasContext(): CanvasRenderingContext2D;
+  get canvasElement(): HTMLCanvasElement;
+
+  // Новые методы для работы с данными и визуализацией
+  setCustomRenderer(
+    renderer: (
+      ctx: CanvasRenderingContext2D,
+      dataArray: Uint8Array,
+      params: {
+        canvas: HTMLCanvasElement;
+        startIndex: number;
+        usableBufferLength: number;
+        maxHeightPx: number;
+        options: AudioVisualizerOptions;
+        getColor: (index: number) => string | CanvasGradient;
+      }
+    ) => void
+  ): void;
+
+  getAudioData(): { dataArray: Uint8Array; bufferLength: number } | null;
+
+  getProcessedAudioData(): {
+    dataArray: Uint8Array;
+    startIndex: number;
+    usableBufferLength: number;
+    maxHeightPx: number;
+  } | null;
+
+  setVisualizationType(type: 'smooth' | 'bars' | 'custom'): void;
+  getVisualizationType(): string;
+  toggleVisualization(forceState?: boolean): boolean;
+  resize(width: number, height: number): void;
 }

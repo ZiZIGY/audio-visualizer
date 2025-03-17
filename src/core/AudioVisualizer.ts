@@ -145,8 +145,7 @@ export class AudioVisualizer {
     this.analyser.getByteFrequencyData(dataArray);
 
     // Очищаем canvas
-    this.ctx.fillStyle = 'rgb(20, 20, 30)';
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Используем только часть спектра согласно настройкам
     const startIndex = Math.floor(
@@ -163,18 +162,29 @@ export class AudioVisualizer {
       this.drawSmoothEqualizer(
         dataArray,
         startIndex,
-        endIndex,
         usableBufferLength,
         maxHeightPx
       );
-    } else {
+    } else if (this.options.visualizationType === 'bars') {
       this.drawBarsEqualizer(
         dataArray,
         startIndex,
-        endIndex,
         usableBufferLength,
         maxHeightPx
       );
+    } else if (
+      this.options.visualizationType === 'custom' &&
+      this.options.customRenderer
+    ) {
+      // Вызываем пользовательскую функцию рендеринга
+      this.options.customRenderer(this.ctx, dataArray, {
+        canvas: this.canvas,
+        startIndex,
+        usableBufferLength,
+        maxHeightPx,
+        options: this.options,
+        getColor: this.getColor.bind(this),
+      });
     }
 
     // Продолжаем анимацию
@@ -182,7 +192,7 @@ export class AudioVisualizer {
   }
 
   // Метод для создания цвета в зависимости от режима
-  private getColor(index: number, total: number): string | CanvasGradient {
+  private getColor(index: number): string | CanvasGradient {
     if (this.options.colorMode === 'hsl' && this.options.hslAnimation.enabled) {
       // Используем HSL с анимацией
       const hue =
@@ -224,7 +234,6 @@ export class AudioVisualizer {
   private drawSmoothEqualizer(
     dataArray: Uint8Array,
     startIndex: number,
-    endIndex: number,
     usableBufferLength: number,
     maxHeightPx: number
   ): void {
@@ -257,14 +266,16 @@ export class AudioVisualizer {
       x: this.canvas.width,
       y:
         this.canvas.height -
-        ((dataArray[endIndex - 1] * this.options.amplification) / 255) *
+        ((dataArray[startIndex + usableBufferLength - 1] *
+          this.options.amplification) /
+          255) *
           maxHeightPx,
     });
 
     // Рисуем заливку, если она включена
     if (this.options.showFill) {
       // Создаем стиль для заливки
-      let fillStyle = this.getColor(0, 1);
+      let fillStyle = this.getColor(0);
 
       // Начинаем путь для заливки
       this.ctx.beginPath();
@@ -291,7 +302,7 @@ export class AudioVisualizer {
     // Рисуем линию, если она включена
     if (this.options.showLine) {
       // Создаем стиль для линии
-      let strokeStyle = this.options.lineColor || this.getColor(0, 1);
+      let strokeStyle = this.options.lineColor || this.getColor(0);
 
       // Рисуем контур кривой
       this.ctx.beginPath();
@@ -315,7 +326,6 @@ export class AudioVisualizer {
   private drawBarsEqualizer(
     dataArray: Uint8Array,
     startIndex: number,
-    endIndex: number,
     usableBufferLength: number,
     maxHeightPx: number
   ): void {
@@ -342,9 +352,7 @@ export class AudioVisualizer {
 
       // Получаем цвет для текущего столбца
       const fillStyle =
-        this.options.colorMode === 'hsl'
-          ? this.getColor(i, numBars)
-          : this.getColor(0, 1); // Для RGB используем один цвет/градиент
+        this.options.colorMode === 'hsl' ? this.getColor(i) : this.getColor(0); // Для RGB используем один цвет/градиент
 
       // Рисуем столбец
       if (this.options.showFill) {
@@ -380,5 +388,117 @@ export class AudioVisualizer {
       this.analyser.fftSize = this.options.fftSize;
       this.analyser.smoothingTimeConstant = this.options.smoothingTimeConstant;
     }
+  }
+
+  // Геттеры и сеттеры для удобства работы с классом
+  public get isPlaying(): boolean {
+    return this.animationId !== 0;
+  }
+
+  public get audioData(): Uint8Array | null {
+    if (!this.analyser) return null;
+
+    const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+    this.analyser.getByteFrequencyData(dataArray);
+    return dataArray;
+  }
+
+  public get frequencyBinCount(): number {
+    return this.analyser ? this.analyser.frequencyBinCount : 0;
+  }
+
+  public get canvasContext(): CanvasRenderingContext2D {
+    return this.ctx;
+  }
+
+  public get canvasElement(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  // Метод для установки кастомного рендерера
+  public setCustomRenderer(
+    renderer: (
+      ctx: CanvasRenderingContext2D,
+      dataArray: Uint8Array,
+      params: {
+        canvas: HTMLCanvasElement;
+        startIndex: number;
+        usableBufferLength: number;
+        maxHeightPx: number;
+        options: AudioVisualizerOptions;
+        getColor: (index: number) => string | CanvasGradient;
+      }
+    ) => void
+  ): void {
+    this.options.customRenderer = renderer;
+    this.options.visualizationType = 'custom';
+  }
+
+  // Метод для получения текущих аудио данных (для внешнего использования)
+  public getAudioData(): {
+    dataArray: Uint8Array;
+    bufferLength: number;
+  } | null {
+    if (!this.analyser) return null;
+
+    const bufferLength = this.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    this.analyser.getByteFrequencyData(dataArray);
+
+    return { dataArray, bufferLength };
+  }
+
+  // Метод для получения обработанных данных в соответствии с настройками
+  public getProcessedAudioData(): {
+    dataArray: Uint8Array;
+    startIndex: number;
+    usableBufferLength: number;
+    maxHeightPx: number;
+  } | null {
+    if (!this.analyser) return null;
+
+    const bufferLength = this.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    this.analyser.getByteFrequencyData(dataArray);
+
+    const startIndex = Math.floor(
+      bufferLength * this.options.frequencyRange.start
+    );
+    const endIndex = Math.floor(bufferLength * this.options.frequencyRange.end);
+    const usableBufferLength = endIndex - startIndex;
+    const maxHeightPx = (this.canvas.height * this.options.maxHeight) / 100;
+
+    return { dataArray, startIndex, usableBufferLength, maxHeightPx };
+  }
+
+  // Метод для переключения типа визуализации
+  public setVisualizationType(type: 'smooth' | 'bars' | 'custom'): void {
+    this.options.visualizationType = type;
+  }
+
+  // Метод для получения текущего типа визуализации
+  public getVisualizationType(): string {
+    return this.options.visualizationType;
+  }
+
+  // Метод для паузы/возобновления визуализации без остановки аудио
+  public toggleVisualization(forceState?: boolean): boolean {
+    const newState = forceState !== undefined ? forceState : !this.isPlaying;
+
+    if (newState && !this.isPlaying) {
+      this.start();
+      return true;
+    } else if (!newState && this.isPlaying) {
+      this.stop();
+      return false;
+    }
+
+    return this.isPlaying;
+  }
+
+  // Метод для изменения размера canvas
+  public resize(width: number, height: number): void {
+    this.canvas.width = width;
+    this.canvas.height = height;
   }
 }
