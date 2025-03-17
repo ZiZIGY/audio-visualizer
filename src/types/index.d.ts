@@ -56,12 +56,20 @@ export interface AudioVisualizerOptions {
     hueStep: number; // Шаг изменения оттенка для каждого столбца
     speed: number; // Скорость анимации
   };
+
+  // Настройки эффекта свечения
+  glowEffect: {
+    enabled: boolean; // Включен ли эффект свечения
+    color: string; // Цвет свечения
+    blur: number; // Размер размытия (0-50)
+    intensity: number; // Интенсивность свечения (0-1)
+  };
 }
 
 export class AudioVisualizer {
   constructor(
-    audioElement: HTMLAudioElement,
     canvas: HTMLCanvasElement,
+    mediaElement?: HTMLAudioElement | HTMLVideoElement,
     options?: Partial<AudioVisualizerOptions>
   );
 
@@ -72,14 +80,16 @@ export class AudioVisualizer {
   stop(): void;
   updateOptions(newOptions: Partial<AudioVisualizerOptions>): void;
 
-  // Новые геттеры
+  // Геттеры
   get isPlaying(): boolean;
   get audioData(): Uint8Array | null;
   get frequencyBinCount(): number;
   get canvasContext(): CanvasRenderingContext2D;
   get canvasElement(): HTMLCanvasElement;
+  get mediaElement(): HTMLAudioElement | HTMLVideoElement | null;
 
-  // Новые методы для работы с данными и визуализацией
+  // Методы для работы с данными и визуализацией
+  setMediaElement(newMediaElement: HTMLAudioElement | HTMLVideoElement): void;
   setCustomRenderer(
     renderer: (
       ctx: CanvasRenderingContext2D,

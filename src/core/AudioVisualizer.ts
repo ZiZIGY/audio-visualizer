@@ -8,10 +8,21 @@ export class AudioVisualizer {
   private animationId: number = 0;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private audioElement: HTMLAudioElement;
+  private _mediaElement: HTMLAudioElement | HTMLVideoElement | null = null;
   public options: AudioVisualizerOptions;
   private hueOffset: number = 0; // Смещение оттенка для анимации
   private lastFrameTime: number = 0; // Время последнего кадра для анимации
+
+  // Добавим метод для сглаживания данных анализа
+  private smoothedAnalysisData = {
+    bassPercent: 0,
+    midPercent: 0,
+    highPercent: 0,
+    spectralCentroid: 0,
+    spectralFlatness: 0,
+  };
+
+  private smoothingFactor = 0.85; // Фактор сглаживания (0-1)
 
   // Значения по умолчанию
   private static readonly DEFAULT_OPTIONS: AudioVisualizerOptions = {
@@ -20,19 +31,19 @@ export class AudioVisualizer {
     showFill: true,
     showLine: true,
     lineWidth: 2,
-    lineColor: 'rgba(255, 255, 255, 0.5)',
-    fillColor: null, // null означает использовать градиент
+    lineColor: null, // null означает использовать HSL градиент
+    fillColor: null, // null означает использовать HSL градиент
     visualizationType: 'smooth',
     barWidth: 4,
     barSpacing: 1,
     gradient: {
       colors: [
-        { position: 0, color: 'rgb(255, 0, 0)' }, // Красный
-        { position: 0.2, color: 'rgb(255, 165, 0)' }, // Оранжевый
-        { position: 0.4, color: 'rgb(255, 255, 0)' }, // Желтый
-        { position: 0.6, color: 'rgb(0, 255, 0)' }, // Зеленый
-        { position: 0.8, color: 'rgb(0, 255, 255)' }, // Голубой
-        { position: 1, color: 'rgb(0, 0, 255)' }, // Синий
+        { position: 0, color: 'hsl(0, 80%, 50%)' },
+        { position: 0.2, color: 'hsl(72, 80%, 50%)' },
+        { position: 0.4, color: 'hsl(144, 80%, 50%)' },
+        { position: 0.6, color: 'hsl(216, 80%, 50%)' },
+        { position: 0.8, color: 'hsl(288, 80%, 50%)' },
+        { position: 1, color: 'hsl(360, 80%, 50%)' },
       ],
     },
     frequencyRange: {
@@ -41,25 +52,31 @@ export class AudioVisualizer {
     },
     amplification: 1.2,
     maxHeight: 100,
-    colorMode: 'rgb',
+    colorMode: 'hsl', // Всегда используем HSL
     hslBase: {
       hue: 0,
       saturation: 80,
       lightness: 50,
     },
     hslAnimation: {
-      enabled: false,
+      enabled: true, // По умолчанию анимация включена
       hueStep: 10,
       speed: 30,
+    },
+    // Настройки эффекта свечения
+    glowEffect: {
+      enabled: false,
+      color: 'rgba(255, 255, 255, 0.7)',
+      blur: 15,
+      intensity: 0.5,
     },
   };
 
   constructor(
-    audioElement: HTMLAudioElement,
     canvas: HTMLCanvasElement,
+    mediaElement?: HTMLAudioElement | HTMLVideoElement,
     options: Partial<AudioVisualizerOptions> = {}
   ) {
-    this.audioElement = audioElement;
     this.canvas = canvas;
 
     const ctx = this.canvas.getContext('2d');
@@ -71,15 +88,16 @@ export class AudioVisualizer {
     // Объединяем настройки по умолчанию с переданными
     this.options = { ...AudioVisualizer.DEFAULT_OPTIONS, ...options };
 
-    // Инициализируем аудио контекст и анализатор
-    this.initAudio();
-
-    // Добавляем обработчики событий
-    this.setupEventListeners();
+    // Если передан медиа элемент, инициализируем аудио контекст
+    if (mediaElement) {
+      this.setMediaElement(mediaElement);
+    }
   }
 
   // Инициализация аудио контекста и анализатора
   private initAudio(): void {
+    if (!this._mediaElement) return;
+
     // Создаем аудио контекст
     this.audioContext = new (window.AudioContext ||
       (window as any).webkitAudioContext)();
@@ -89,22 +107,26 @@ export class AudioVisualizer {
     this.analyser.fftSize = this.options.fftSize;
     this.analyser.smoothingTimeConstant = this.options.smoothingTimeConstant;
 
-    // Подключаем аудио элемент к анализатору
-    this.source = this.audioContext.createMediaElementSource(this.audioElement);
+    // Подключаем медиа элемент к анализатору
+    this.source = this.audioContext.createMediaElementSource(
+      this._mediaElement
+    );
     this.source.connect(this.analyser);
     this.analyser.connect(this.audioContext.destination);
   }
 
   // Настройка обработчиков событий
   private setupEventListeners(): void {
+    if (!this._mediaElement) return;
+
     // Запуск визуализации при воспроизведении
-    this.audioElement.addEventListener('play', this.start.bind(this));
+    this._mediaElement.addEventListener('play', this.start.bind(this));
 
     // Остановка визуализации при паузе
-    this.audioElement.addEventListener('pause', this.stop.bind(this));
+    this._mediaElement.addEventListener('pause', this.stop.bind(this));
 
     // Остановка визуализации при окончании
-    this.audioElement.addEventListener('ended', this.stop.bind(this));
+    this._mediaElement.addEventListener('ended', this.stop.bind(this));
   }
 
   // Запуск визуализации
@@ -113,6 +135,7 @@ export class AudioVisualizer {
       this.audioContext.resume();
     }
 
+    // Если нет медиа элемента, просто рисуем пустую визуализацию
     this.draw();
   }
 
@@ -126,7 +149,22 @@ export class AudioVisualizer {
 
   // Метод для рисования визуализации
   private draw(timestamp: number = 0): void {
-    if (!this.analyser) return;
+    // Если нет анализатора, рисуем пустую визуализацию
+    if (!this.analyser) {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.fillStyle = 'white';
+      this.ctx.textAlign = 'center';
+      this.ctx.font = '16px Arial';
+      this.ctx.fillText(
+        'Медиа элемент не подключен',
+        this.canvas.width / 2,
+        this.canvas.height / 2
+      );
+      this.animationId = requestAnimationFrame(this.draw.bind(this));
+      return;
+    }
 
     // Обновляем смещение оттенка для анимации
     if (this.options.hslAnimation.enabled) {
@@ -187,45 +225,84 @@ export class AudioVisualizer {
       });
     }
 
+    // Применяем эффект свечения, если он включен
+    if (this.options.glowEffect.enabled) {
+      this.applyGlowEffect();
+    }
+
     // Продолжаем анимацию
     this.animationId = requestAnimationFrame(this.draw.bind(this));
   }
 
-  // Метод для создания цвета в зависимости от режима
-  private getColor(index: number): string | CanvasGradient {
-    if (this.options.colorMode === 'hsl' && this.options.hslAnimation.enabled) {
-      // Используем HSL с анимацией
-      const hue =
-        (this.options.hslBase.hue +
-          this.hueOffset +
-          index * this.options.hslAnimation.hueStep) %
-        360;
-      return `hsl(${hue}, ${this.options.hslBase.saturation}%, ${this.options.hslBase.lightness}%)`;
-    } else if (this.options.colorMode === 'hsl') {
-      // Используем HSL без анимации
-      const hue =
-        (this.options.hslBase.hue + index * this.options.hslAnimation.hueStep) %
-        360;
-      return `hsl(${hue}, ${this.options.hslBase.saturation}%, ${this.options.hslBase.lightness}%)`;
-    } else {
-      // Используем обычный градиент или цвет
-      if (this.options.fillColor) {
-        return this.options.fillColor;
-      } else {
-        // Создаем градиент
-        const gradient = this.ctx.createLinearGradient(
-          0,
-          0,
-          this.canvas.width,
-          0
-        );
+  // Метод для применения эффекта свечения
+  private applyGlowEffect(): void {
+    // Сохраняем текущие настройки контекста
+    this.ctx.save();
 
-        // Добавляем цвета градиента
-        for (const colorStop of this.options.gradient.colors) {
+    // Устанавливаем параметры свечения
+    this.ctx.shadowColor = this.options.glowEffect.color;
+    this.ctx.shadowBlur = this.options.glowEffect.blur;
+    this.ctx.globalAlpha = this.options.glowEffect.intensity;
+
+    // Рисуем содержимое canvas поверх себя для создания эффекта свечения
+    this.ctx.globalCompositeOperation = 'lighter';
+    this.ctx.drawImage(this.canvas, 0, 0);
+
+    // Восстанавливаем настройки контекста
+    this.ctx.restore();
+  }
+
+  // Метод для получения цвета в зависимости от режима
+  private getColor(
+    index: number,
+    isGradient: boolean = false
+  ): string | CanvasGradient {
+    if (isGradient) {
+      // Создаем HSL градиент
+      const gradient = this.ctx.createLinearGradient(
+        0,
+        0,
+        this.canvas.width,
+        0
+      );
+
+      // Если анимация включена, смещаем весь градиент
+      const hueShift = this.options.hslAnimation.enabled ? this.hueOffset : 0;
+
+      // Добавляем цвета градиента с учетом смещения
+      for (const colorStop of this.options.gradient.colors) {
+        const hslMatch = colorStop.color.match(
+          /hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/
+        );
+        if (hslMatch) {
+          const hue = (parseInt(hslMatch[1]) + hueShift) % 360;
+          gradient.addColorStop(
+            colorStop.position,
+            `hsl(${hue}, ${hslMatch[2]}%, ${hslMatch[3]}%)`
+          );
+        } else {
           gradient.addColorStop(colorStop.position, colorStop.color);
         }
+      }
 
-        return gradient;
+      return gradient;
+    } else {
+      // Для отдельных элементов (столбцы, точки на линии)
+      if (this.options.hslAnimation.enabled) {
+        // Используем HSL с анимацией
+        const hue =
+          (this.options.hslBase.hue +
+            this.hueOffset +
+            index * this.options.hslAnimation.hueStep) %
+          360;
+        return `hsl(${hue}, ${this.options.hslBase.saturation}%, ${this.options.hslBase.lightness}%)`;
+      } else {
+        // Используем HSL без анимации
+        const hue =
+          (this.options.hslBase.hue +
+            index * this.options.hslAnimation.hueStep) %
+          360;
+        return `hsl(${hue}, ${this.options.hslBase.saturation}%, ${this.options.hslBase.lightness}%)`;
       }
     }
   }
@@ -274,8 +351,8 @@ export class AudioVisualizer {
 
     // Рисуем заливку, если она включена
     if (this.options.showFill) {
-      // Создаем стиль для заливки
-      let fillStyle = this.getColor(0);
+      // Создаем градиент для заливки
+      const fillStyle = this.getColor(0, true);
 
       // Начинаем путь для заливки
       this.ctx.beginPath();
@@ -301,8 +378,8 @@ export class AudioVisualizer {
 
     // Рисуем линию, если она включена
     if (this.options.showLine) {
-      // Создаем стиль для линии
-      let strokeStyle = this.options.lineColor || this.getColor(0);
+      // Создаем градиент для линии
+      const strokeStyle = this.options.lineColor || this.getColor(0, true);
 
       // Рисуем контур кривой
       this.ctx.beginPath();
@@ -333,6 +410,9 @@ export class AudioVisualizer {
     const totalBarWidth = this.options.barWidth + this.options.barSpacing;
     const numBars = Math.floor(this.canvas.width / totalBarWidth);
 
+    // Получаем градиент для всех столбцов
+    const gradientFill = this.getColor(0, true);
+
     // Рисуем столбцы
     for (let i = 0; i < numBars; i++) {
       // Вычисляем индекс данных для текущего столбца
@@ -350,24 +430,34 @@ export class AudioVisualizer {
       // Позиция столбца
       const x = i * totalBarWidth;
 
-      // Получаем цвет для текущего столбца
-      const fillStyle =
-        this.options.colorMode === 'hsl' ? this.getColor(i) : this.getColor(0); // Для RGB используем один цвет/градиент
-
       // Рисуем столбец
       if (this.options.showFill) {
-        this.ctx.fillStyle = fillStyle;
-        this.ctx.fillRect(
+        // Используем градиент для всех столбцов
+        this.ctx.fillStyle = gradientFill;
+
+        // Сохраняем контекст для ограничения градиента только текущим столбцом
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(
           x,
           this.canvas.height - barHeight,
           this.options.barWidth,
           barHeight
         );
+        this.ctx.clip();
+        this.ctx.fillRect(
+          0,
+          this.canvas.height - barHeight,
+          this.canvas.width,
+          barHeight
+        );
+        this.ctx.restore();
       }
 
       // Рисуем контур столбца, если включена линия
       if (this.options.showLine) {
-        this.ctx.strokeStyle = this.options.lineColor || fillStyle;
+        this.ctx.strokeStyle =
+          this.options.lineColor || this.getColor(i, false);
         this.ctx.lineWidth = 1;
         this.ctx.strokeRect(
           x,
@@ -500,5 +590,47 @@ export class AudioVisualizer {
   public resize(width: number, height: number): void {
     this.canvas.width = width;
     this.canvas.height = height;
+  }
+
+  // Геттер для получения медиа элемента
+  get mediaElement(): HTMLAudioElement | HTMLVideoElement | null {
+    return this._mediaElement;
+  }
+
+  // Метод для замены медиа элемента
+  public setMediaElement(
+    newMediaElement: HTMLAudioElement | HTMLVideoElement
+  ): void {
+    // Останавливаем текущую визуализацию
+    this.stop();
+
+    // Удаляем обработчики событий со старого элемента
+    if (this._mediaElement) {
+      this._mediaElement.removeEventListener('play', this.start.bind(this));
+      this._mediaElement.removeEventListener('pause', this.stop.bind(this));
+      this._mediaElement.removeEventListener('ended', this.stop.bind(this));
+    }
+
+    // Отключаем старый источник, если он существует
+    if (this.source) {
+      this.source.disconnect();
+    }
+
+    // Закрываем старый аудио контекст, если он существует
+    if (this.audioContext) {
+      this.audioContext.close();
+    }
+
+    // Устанавливаем новый медиа элемент
+    this._mediaElement = newMediaElement;
+
+    // Пересоздаем аудио контекст и анализатор
+    this.initAudio();
+    this.setupEventListeners();
+
+    // Если новый элемент уже воспроизводится, запускаем визуализацию
+    if (this._mediaElement && !this._mediaElement.paused) {
+      this.start();
+    }
   }
 }
